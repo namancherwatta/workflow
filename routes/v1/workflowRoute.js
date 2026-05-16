@@ -1,21 +1,17 @@
-// routes/workflow.routes.js
-const express = require("express")
-const router = express.Router()
-const auth = require("../middleware/auth")
-const {
-  createWorkflow,
-  editWorkflow,
-  publishWorkflow,
-  runWorkflow,
-  getRunHistory,
-  deleteWorkflow,
-} = require("../controllers/workflow.controller")
+import { Router } from "express"
+import auth from "../middleware/auth.js"
+import {
+  createWorkflow, editWorkflow, publishWorkflow,
+  runWorkflow, getRunHistory, deleteWorkflow, createNode
+} from "../../controllers/workflowController.js"
 
-router.post("/", auth, createWorkflow)
-router.patch("/:id", auth, editWorkflow)
-router.post("/:id/publish", auth, publishWorkflow)
-router.post("/:id/run", auth, runWorkflow)
-router.get("/:id/runs", auth, getRunHistory)
-router.delete("/:id", auth, deleteWorkflow)
+const router = Router()
+router.post("/",           auth, createWorkflow)
+router.patch("/:id",       auth, editWorkflow)
+router.post("/:id/publish",auth, publishWorkflow)
+router.post("/:id/run",    auth, runWorkflow)
+router.get("/:id/runs",    auth, getRunHistory)
+router.delete("/:id",      auth, deleteWorkflow)
+router.get("/nodes/:nodeId", auth, getNode)
 
-module.exports = router
+export default router

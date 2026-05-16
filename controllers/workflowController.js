@@ -1,27 +1,72 @@
-const Workflow = require("../models/Workflow")
-const Run = require("../models/Run")
+import Workflow from "../models/worflowModel.js"
+import Run from "../models/run.js"
+import Node from "../models/node.js"
+import { nodeRegistry } from "../services/workflowExecutor.js"
+import { workflowQueue } from "../queues/workflowQueue.js"
+import { scheduleWorkflow, unscheduleWorkflow } from "../services/scheduler.js"
 
 // POST /workflows
-exports.createWorkflow = async (req, res) => {
+export const createWorkflow = async (req, res) => {
   try {
     const { name, trigger, nodes } = req.body
 
+    // Validate trigger
+    if (!trigger || !trigger.type)
+      return res.status(400).json({ message: "trigger.type is required" })
+
+    // 1. Create each node from the inline definition
+    //    nodes array comes in with full config, not just IDs
+    const nodeRefs = []
+
+    for (const nodeDef of (nodes || [])) {
+      const { name: nodeName, type, config, transformQuery, order,
+              nextOnTrue, nextOnFalse } = nodeDef
+
+      // Validate node type against registry
+      if (!nodeRegistry[type])
+        return res.status(400).json({
+          message: `Unknown node type: "${type}"`,
+          supported: Object.keys(nodeRegistry)
+        })
+
+      // Insert the actual node into the Node collection
+      const createdNode = await Node.create({
+        name: nodeName || "Untitled Node",
+        type,
+        config,
+        transformQuery: transformQuery || null,
+      })
+
+      // Build the workflow node reference
+      nodeRefs.push({
+        nodeId:     createdNode._id,
+        order,
+        nextOnTrue:  nextOnTrue  || undefined,
+        nextOnFalse: nextOnFalse || undefined,
+      })
+    }
+
+    // 2. Sort refs by order just to be safe
+    nodeRefs.sort((a, b) => a.order - b.order)
+
+    // 3. Create the workflow with the generated nodeIds
     const workflow = await Workflow.create({
       userId: req.userId,
       name,
       trigger,
-      nodes: nodes || [],
+      nodes: nodeRefs,
       status: "draft",
     })
 
     res.status(201).json({ message: "Workflow created", workflow })
+
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
 }
 
 // PATCH /workflows/:id
-exports.editWorkflow = async (req, res) => {
+export const editWorkflow = async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id)
 
@@ -51,7 +96,7 @@ exports.editWorkflow = async (req, res) => {
 }
 
 // POST /workflows/:id/publish
-exports.publishWorkflow = async (req, res) => {
+export const publishWorkflow = async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id)
 
@@ -70,6 +115,9 @@ exports.publishWorkflow = async (req, res) => {
 
     workflow.status = "published"
     await workflow.save()
+    if (workflow.trigger.type === "schedule") {
+       scheduleWorkflow(workflow)   // ← register cron immediately
+    }
 
     res.json({ message: "Workflow published", workflow })
   } catch (err) {
@@ -78,36 +126,36 @@ exports.publishWorkflow = async (req, res) => {
 }
 
 // POST /workflows/:id/run
-exports.runWorkflow = async (req, res) => {
+export const runWorkflow = async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id)
 
     if (!workflow)
       return res.status(404).json({ message: "Workflow not found" })
-
     if (workflow.userId.toString() !== req.userId)
       return res.status(403).json({ message: "Forbidden" })
-
-    // Only published workflows can be run
     if (workflow.status !== "published")
       return res.status(400).json({ message: "Only published workflows can be run" })
 
-    // Create a run record immediately as "pending"
+    // Create the run record
     const run = await Run.create({
       workflowId: workflow._id,
-      userId: req.userId,
-      status: "pending",
-      triggerType: "manual",
+      userId:     req.userId,
+      status:     "pending",
+      triggerType:"manual",
       triggerPayload: req.body.payload || {},
-      startedAt: new Date(),
-      nodeLogs: [],
+      startedAt:  new Date(),
+      nodeLogs:   [],
     })
 
-    // Respond immediately — execution happens async
-    res.status(202).json({ message: "Workflow run started", runId: run._id })
+    // ✅ Push to queue — Express is done, worker picks it up separately
+    await workflowQueue.add("execute", {
+      workflowId: workflow._id.toString(),
+      runId:      run._id.toString(),
+    })
 
-    // Execute async (don't await — so user gets response immediately)
-    executeWorkflow(workflow, run)
+    // Respond immediately — execution is now offloaded
+    res.status(202).json({ message: "Workflow queued", runId: run._id })
 
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -115,7 +163,7 @@ exports.runWorkflow = async (req, res) => {
 }
 
 // GET /workflows/:id/runs
-exports.getRunHistory = async (req, res) => {
+export const getRunHistory = async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id)
 
@@ -136,7 +184,7 @@ exports.getRunHistory = async (req, res) => {
 }
 
 // DELETE /workflows/:id
-exports.deleteWorkflow = async (req, res) => {
+export const deleteWorkflow = async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id)
 
@@ -149,10 +197,20 @@ exports.deleteWorkflow = async (req, res) => {
     // Delete workflow and all its runs
     await Workflow.findByIdAndDelete(req.params.id)
     await Run.deleteMany({ workflowId: req.params.id })
-
+    unscheduleWorkflow(req.params.id)  
     res.json({ message: "Workflow and all runs deleted" })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
 }
 
+//Get Node
+export const getNode = async (req, res) => {
+  try {
+    const node = await Node.findById(req.params.nodeId)
+    if (!node) return res.status(404).json({ message: "Node not found" })
+    res.json(node)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+}

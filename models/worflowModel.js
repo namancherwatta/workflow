@@ -57,4 +57,4 @@ const workflowSchema = new mongoose.Schema(
   }
 )
 
-module.exports = mongoose.model("workflow", workflowSchema)
+export default mongoose.model("workflow", workflowSchema)
