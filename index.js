@@ -5,9 +5,16 @@ import userRoute from "./routes/v1/userRoute.js"
 import workflowRoute from "./routes/v1/workflowRoute.js"
 import webhookRoute from "./routes/v1/webhookRoute.js"
 import { initScheduler } from "./services/scheduler.js"
+import cors from "cors"  
 
 dotenv.config()
 const app=express()
+
+app.use(cors({                        
+  origin: "http://localhost:5173",    
+  methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}))
 app.use(express.json())
 
 app.get("/",(req,res)=>{   
