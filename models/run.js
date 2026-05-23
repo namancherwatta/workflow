@@ -26,6 +26,9 @@ const nodeLogSchema = new mongoose.Schema({
   startedAt: Date,
   endedAt: Date,
   duration: Number,        // in milliseconds
+  nodeName:   String,
+  nodeType:   String,
+  branchTaken: String, 
 }, { _id: false })
 
 const runSchema = new mongoose.Schema(
@@ -60,4 +63,4 @@ const runSchema = new mongoose.Schema(
   { timestamps: true }
 )
 
-module.exports = mongoose.model("run", runSchema)
+export default mongoose.model("Run", runSchema)

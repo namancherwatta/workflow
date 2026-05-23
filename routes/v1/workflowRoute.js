@@ -1,8 +1,8 @@
 import { Router } from "express"
-import auth from "../middleware/auth.js"
+import auth from "../../middleware/auth.js"
 import {
   createWorkflow, editWorkflow, publishWorkflow,
-  runWorkflow, getRunHistory, deleteWorkflow, createNode
+  runWorkflow, getRunHistory, deleteWorkflow, getNode, getRunDetail
 } from "../../controllers/workflowController.js"
 
 const router = Router()
@@ -11,6 +11,7 @@ router.patch("/:id",       auth, editWorkflow)
 router.post("/:id/publish",auth, publishWorkflow)
 router.post("/:id/run",    auth, runWorkflow)
 router.get("/:id/runs",    auth, getRunHistory)
+router.get("/:id/runs/:runId",    auth, getRunDetail)
 router.delete("/:id",      auth, deleteWorkflow)
 router.get("/nodes/:nodeId", auth, getNode)
 

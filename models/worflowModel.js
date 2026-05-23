@@ -6,18 +6,11 @@ const workflowNodeRefSchema = new mongoose.Schema({
     ref: "node",
     required: true,
   },
-  order: {
-    type: Number,
-    required: true,
-  },
-  nextOnTrue: {
-    nodeId: { type: mongoose.Schema.Types.ObjectId, ref: "Node" },
-    order: Number,
-  },
-  nextOnFalse: {
-    nodeId: { type: mongoose.Schema.Types.ObjectId, ref: "Node" },
-    order: Number,
-  },
+  order: { type: Number, required: true },
+  nextOnTrue:  { order: { type: Number, default: null } },
+  nextOnFalse: { order: { type: Number, default: null } },
+  nextNodeId:  { order: { type: Number, default: null } }, 
+
 }, { _id: false })
 
 const workflowSchema = new mongoose.Schema(
@@ -27,34 +20,16 @@ const workflowSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    status: {
-      type: String,
-      enum: ["draft", "published"],
-      default: "draft",
-    },
+    name:   { type: String, required: true, trim: true },
+    status: { type: String, enum: ["draft", "published"], default: "draft" },
     trigger: {
-      type: {
-        type: String,
-        enum: ["webhook", "schedule"],
-        required: true,
-      },
-      secretKey: String,       // if webhook
-      cronExpression: String,  // if schedule e.g "*/5 * * * *"
+      type:           { type: String, enum: ["webhook", "schedule"], required: true },
+      secretKey:      String,
+      cronExpression: String,
     },
-
     nodes: [workflowNodeRefSchema]
-    // Example:
-    // [
-    //   { nodeId: "n1", order: 1 },
-    //   { nodeId: "n2", order: 2 },
-    //   { nodeId: "n3", order: 3, nextOnTrue: {nodeId: "n4", order: 4}, nextOnFalse: {nodeId: "n5", order: 5} },
-    // ]
-  }
+  },
+  { timestamps: true }  
 )
 
 export default mongoose.model("workflow", workflowSchema)

@@ -8,6 +8,7 @@ import { scheduleWorkflow, unscheduleWorkflow } from "../services/scheduler.js"
 // POST /workflows
 export const createWorkflow = async (req, res) => {
   try {
+     //console.log("BODY:", JSON.stringify(req.body, null, 2))
     const { name, trigger, nodes } = req.body
 
     // Validate trigger
@@ -20,8 +21,8 @@ export const createWorkflow = async (req, res) => {
 
     for (const nodeDef of (nodes || [])) {
       const { name: nodeName, type, config, transformQuery, order,
-              nextOnTrue, nextOnFalse } = nodeDef
-
+        nextOnTrue, nextOnFalse, nextNodeId } = nodeDef
+       
       // Validate node type against registry
       if (!nodeRegistry[type])
         return res.status(400).json({
@@ -41,8 +42,9 @@ export const createWorkflow = async (req, res) => {
       nodeRefs.push({
         nodeId:     createdNode._id,
         order,
-        nextOnTrue:  nextOnTrue  || undefined,
-        nextOnFalse: nextOnFalse || undefined,
+        nextOnTrue:  nextOnTrue  ? { order: nextOnTrue.order }  : undefined,
+        nextOnFalse: nextOnFalse ? { order: nextOnFalse.order } : undefined,
+        nextNodeId:  nextNodeId  ? { order: nextNodeId.order }  : undefined,
       })
     }
 
@@ -175,7 +177,7 @@ export const getRunHistory = async (req, res) => {
 
     const runs = await Run.find({ workflowId: req.params.id })
       .sort({ startedAt: -1 })  // newest first
-      .select("-nodeLogs")       // exclude nodeLogs for summary view
+           // exclude nodeLogs for summary view
 
     res.json({ runs })
   } catch (err) {
@@ -210,6 +212,25 @@ export const getNode = async (req, res) => {
     const node = await Node.findById(req.params.nodeId)
     if (!node) return res.status(404).json({ message: "Node not found" })
     res.json(node)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+}
+
+//run Detail
+export const getRunDetail = async (req, res) => {
+  try {
+    const workflow = await Workflow.findById(req.params.id)
+    if (!workflow)
+      return res.status(404).json({ message: "Workflow not found" })
+    if (workflow.userId.toString() !== req.userId)
+      return res.status(403).json({ message: "Forbidden" })
+
+    const run = await Run.findById(req.params.runId)
+    if (!run)
+      return res.status(404).json({ message: "Run not found" })
+
+    res.json({ run })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

@@ -3,7 +3,7 @@ import Run from "../models/run.js"
 import Node from "../models/node.js"
 
 // ── Registry — add new node type = add 1 import + 1 line here ──────────────
-import http_request from "./nodes/httprequest.js"
+import http_request from "./nodes/httpRequest.js"
 import condition    from "./nodes/condition.js"
 import delay        from "./nodes/delay.js"
 import notify       from "./nodes/notify.js"
@@ -18,37 +18,62 @@ export const nodeRegistry = {
 const MAX_RETRIES    = 3
 const NODE_TIMEOUT   = 10_000  // 10 seconds per node
 
+function getNextNodeRef(node, currentNodeRef, sortedNodes, result, arrivedViaBranch = false) {
+
+  if (node.type === "condition") {
+    const branchRef = result.conditionResult
+      ? currentNodeRef.nextOnTrue
+      : currentNodeRef.nextOnFalse
+
+    if (branchRef?.order == null) return { nodeRef: null, viaBranch: false }
+
+    const found = sortedNodes.find(n => n.order === branchRef.order) || null
+    return { nodeRef: found, viaBranch: true }
+  }
+
+  // Explicit nextNodeId — follow it, but KEEP viaBranch flag alive
+  if (currentNodeRef.nextNodeId?.order != null) {
+    const found = sortedNodes.find(n => n.order === currentNodeRef.nextNodeId.order) || null
+    return { nodeRef: found, viaBranch: arrivedViaBranch }  // ← was: false, now propagates
+  }
+
+  // No explicit next — if we're in a branch, STOP (don't bleed into sibling branch)
+  if (arrivedViaBranch) {
+    return { nodeRef: null, viaBranch: false }
+  }
+
+  // Default linear progression (only for nodes NOT inside a branch)
+  const currentOrder = currentNodeRef.order
+  const nextInOrder  = sortedNodes
+    .filter(n => n.order > currentOrder)
+    .sort((a, b) => a.order - b.order)[0]
+
+  return { nodeRef: nextInOrder || null, viaBranch: false }
+}
+
 // ── Main entry point ────────────────────────────────────────────────────────
 export async function executeWorkflow(workflow, run) {
-  // Mark run as running
   await Run.findByIdAndUpdate(run._id, { status: "running" })
 
-  // Sort nodes by order
-  const sortedNodes = [...workflow.nodes].sort((a, b) => a.order - b.order)
+  const sortedNodes    = [...workflow.nodes].sort((a, b) => a.order - b.order)
+  let currentOutput    = run.triggerPayload || {}
+  let currentNodeRef   = sortedNodes[0]
+  let arrivedViaBranch = false   
 
-  // This carries output from one node to the next
-  let currentOutput = run.triggerPayload || {}
-
-  // Track which node to execute next (used for condition branching)
-  let nodeIndex = 0
-
-  while (nodeIndex < sortedNodes.length) {
-    const nodeRef  = sortedNodes[nodeIndex]
-    const node     = await Node.findById(nodeRef.nodeId)
+  while (currentNodeRef) {
+    const node = await Node.findById(currentNodeRef.nodeId)
 
     if (!node) {
-      await failRun(run._id, `Node ${nodeRef.nodeId} not found`)
+      await failRun(run._id, `Node ${currentNodeRef.nodeId} not found`)
       return
     }
 
-    // Apply transformQuery if set — lets user reshape output between nodes
-    // e.g. transformQuery = "output.data.userId" pulls just that field
     if (node.transformQuery) {
       try {
         currentOutput = vm.runInNewContext(
           node.transformQuery,
           { output: currentOutput },
-          { timeout: 1000 }  // 1s sandbox timeout
+          { timeout: 1000 }
         )
       } catch (err) {
         await failRun(run._id, `transformQuery failed: ${err.message}`)
@@ -56,25 +81,28 @@ export async function executeWorkflow(workflow, run) {
       }
     }
 
-    // ── Execute node with retry loop ───────────────────────────────────────
-    const { result, error, retryCount } = await executeWithRetry(node, currentOutput)
     const startedAt = new Date()
-    const endedAt   = new Date()
+    const { result, error, retryCount } = await executeWithRetry(node, currentOutput)
+    const endedAt = new Date()
 
-    // Save this node's log entry
     await Run.findByIdAndUpdate(run._id, {
       $push: {
         nodeLogs: {
-          nodeId:     node._id,
-          order:      nodeRef.order,
-          status:     error ? "failed" : "success",
-          input:      currentOutput,
-          output:     result ?? null,
-          error:      error ? { message: error.message, stack: error.stack } : undefined,
+          nodeId:      node._id,
+          nodeName:    node.name,
+          nodeType:    node.type,
+          order:       currentNodeRef.order,
+          status:      error ? "failed" : "success",
+          input:       currentOutput,
+          output:      result ?? null,
+          error:       error ? { message: error.message, stack: error.stack } : undefined,
           retryCount,
           startedAt,
           endedAt,
-          duration:   endedAt - startedAt,
+          duration:    endedAt - startedAt,
+          branchTaken: node.type === "condition"
+            ? (result?.conditionResult ? "true branch" : "false branch")
+            : undefined,
         }
       }
     })
@@ -86,28 +114,14 @@ export async function executeWorkflow(workflow, run) {
 
     currentOutput = result
 
-    // ── Handle condition branching ─────────────────────────────────────────
-    if (node.type === "condition") {
-      const tookTrueBranch = result.conditionResult
+    const { nodeRef: nextRef, viaBranch } = getNextNodeRef(
+      node, currentNodeRef, sortedNodes, result, arrivedViaBranch
+    )
 
-      // nodeRef has nextOnTrue / nextOnFalse pointing to specific node orders
-      const branchRef = tookTrueBranch ? nodeRef.nextOnTrue : nodeRef.nextOnFalse
-
-      if (!branchRef) {
-        // No branch defined — end of workflow
-        break
-      }
-
-      // Jump to the branch node by finding its index
-      nodeIndex = sortedNodes.findIndex(n => n.order === branchRef.order)
-      if (nodeIndex === -1) break
-      continue  // skip nodeIndex++ below
-    }
-
-    nodeIndex++
+    currentNodeRef   = nextRef
+    arrivedViaBranch = viaBranch  
   }
 
-  // ── Mark run as success ────────────────────────────────────────────────
   const endedAt = new Date()
   await Run.findByIdAndUpdate(run._id, {
     status:   "success",
@@ -115,7 +129,6 @@ export async function executeWorkflow(workflow, run) {
     duration: endedAt - new Date(run.startedAt),
   })
 }
-
 // ── Retry wrapper ────────────────────────────────────────────────────────────
 async function executeWithRetry(node, input) {
   const handler = nodeRegistry[node.type]
