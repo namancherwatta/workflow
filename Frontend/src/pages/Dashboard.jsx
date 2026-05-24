@@ -9,9 +9,10 @@ const outfit = "'Outfit', sans-serif";
 const STATUS_COLORS = {
   draft: { color: "#f59e0b", bg: "#f59e0b18", border: "#f59e0b44" },
   published: { color: "#34d399", bg: "#34d39918", border: "#34d39944" },
+  paused:    { color: "#f87171", bg: "#f8717118", border: "#f8717144" },
 };
 
-function WorkflowCard({ wf, onDelete, onPublish, onRun, onOpen, onViewRuns }) {
+function WorkflowCard({ wf, onDelete, onPublish, onRun, onPause, onResume, onOpen, onViewRuns }) {
   const [actionLoading, setActionLoading] = useState(null);
   const sc = STATUS_COLORS[wf.status] || STATUS_COLORS.draft;
 
@@ -61,9 +62,15 @@ function WorkflowCard({ wf, onDelete, onPublish, onRun, onOpen, onViewRuns }) {
         {wf.status === "draft" && (
           <Btn label={actionLoading === "publish" ? "..." : "PUBLISH"} onClick={() => wrap(onPublish, "publish")} color="#34d399" />
         )}
-        {wf.status === "published" && (
+        {wf.status === "published" && (<>
           <Btn label={actionLoading === "run" ? "QUEUED" : "▶ RUN"} onClick={() => wrap(onRun, "run")} color="#a78bfa" />
-        )}
+          <Btn label={actionLoading === "pause" ? "..." : "⏸ PAUSE"} onClick={() => wrap(onPause, "pause")} color="#f59e0b" />
+        </>)}
+         {wf.status === "paused" && (
+    <Btn label={actionLoading === "resume" ? "..." : "▶ RESUME"}
+      onClick={() => wrap(onResume, "resume")} color="#34d399" />
+  )}
+
         <Btn label="RUNS" onClick={onViewRuns} color="#4a6580" />
         <Btn label={actionLoading === "delete" ? "..." : "DELETE"} onClick={() => wrap(onDelete, "delete")} color="#f87171" danger />
       </div>
@@ -198,37 +205,65 @@ export default function Dashboard() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const load = useCallback(async () => {
-    // Backend doesn't have a list endpoint — we store locally created workflow IDs
-    const ids = JSON.parse(localStorage.getItem("workflowIds") || "[]");
-    // Fetch each workflow from run history or use stored list
-    // Since there's no GET /workflows list endpoint, we maintain local state
-    const stored = JSON.parse(localStorage.getItem("workflows") || "[]");
-    setWorkflows(stored);
-    setLoading(false);
-  }, []);
+const load = useCallback(async () => {
+  try {
+    const { data } = await api.listWorkflows()
+    const apiWorkflows = data.workflows || []
 
+    // Merge API workflow status with localStorage canvas data
+    const stored = JSON.parse(localStorage.getItem("workflows") || "[]")
+
+    const merged = apiWorkflows.map(apiWf => {
+      const local = stored.find(w => w._id === apiWf._id)
+      // Keep API data for status/trigger but restore canvas node data from localStorage
+      return local
+        ? { ...local, status: apiWf.status, updatedAt: apiWf.updatedAt }
+        : apiWf
+    })
+
+    setWorkflows(merged)
+  } catch {
+    const stored = JSON.parse(localStorage.getItem("workflows") || "[]")
+    setWorkflows(stored)
+  } finally {
+    setLoading(false)
+  }
+}, [])
   useEffect(() => { load(); }, [load]);
 
-  const handleDelete = async (id) => {
-    try {
-      await api.deleteWorkflow(id);
-      const updated = workflows.filter((w) => w._id !== id);
-      setWorkflows(updated);
-      localStorage.setItem("workflows", JSON.stringify(updated));
-      showToast("Workflow deleted");
-    } catch (e) { showToast(e.response?.data?.message || "Delete failed", true); }
-  };
+ const handlePause = async (id) => {
+  try {
+    await api.pauseWorkflow(id)
+    await load()  // ✅ reload from API instead of touching localStorage
+    showToast("Workflow paused")
+  } catch (e) { showToast(e.response?.data?.message || "Pause failed", true) }
+}
 
-  const handlePublish = async (id) => {
-    try {
-      const { data } = await api.publishWorkflow(id);
-      const updated = workflows.map((w) => w._id === id ? { ...w, status: "published" } : w);
-      setWorkflows(updated);
-      localStorage.setItem("workflows", JSON.stringify(updated));
-      showToast("Workflow published!");
-    } catch (e) { showToast(e.response?.data?.message || "Publish failed", true); }
-  };
+const handleResume = async (id) => {
+  try {
+    await api.resumeWorkflow(id)
+    await load()  // ✅ reload from API
+    showToast("Workflow resumed")
+  } catch (e) { showToast(e.response?.data?.message || "Resume failed", true) }
+}
+ const handleDelete = async (id) => {
+  try {
+    await api.deleteWorkflow(id)
+    // ✅ clean localStorage too
+    const stored = JSON.parse(localStorage.getItem("workflows") || "[]")
+    localStorage.setItem("workflows", JSON.stringify(stored.filter(w => w._id !== id)))
+    await load()
+    showToast("Workflow deleted")
+  } catch (e) { showToast(e.response?.data?.message || "Delete failed", true) }
+}
+
+const handlePublish = async (id) => {
+  try {
+    await api.publishWorkflow(id)
+    await load()  // ✅ reload from API
+    showToast("Workflow published!")
+  } catch (e) { showToast(e.response?.data?.message || "Publish failed", true) }
+}
 
   const handleRun = async (id) => {
     try {
@@ -306,6 +341,8 @@ export default function Dashboard() {
               onRun={() => handleRun(wf._id)}
               onOpen={handleOpen}
               onViewRuns={() => setRunsModal({ id: wf._id, name: wf.name })}
+              onPause={() => handlePause(wf._id)}
+              onResume={()=> handleResume(wf._id)}
             />
           ))}
         </div>

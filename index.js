@@ -17,8 +17,14 @@ app.use(cors({
 }))
 app.use(express.json())
 
-app.get("/",(req,res)=>{   
-    res.status(200).json({message:"All Ok"})
+app.get("/health", async (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? "connected" : "disconnected"
+  res.json({
+    status: "ok",
+    db: dbStatus,
+    uptime: process.uptime(),
+    timestamp: new Date(),
+  })
 })
 
 app.use("/api/v1/user",userRoute)

@@ -24,5 +24,8 @@ export const getRunHistory = (id) => api.get(`/api/v1/workflows/${id}/runs`);
 export const getRunDetail = (workflowId, runId) =>
   api.get(`/api/v1/workflows/${workflowId}/runs/${runId}`);
 export const getNode = (nodeId) => api.get(`/api/v1/workflows/nodes/${nodeId}`);
-
+export const pauseWorkflow  = (id) => api.post(`/api/v1/workflows/${id}/pause`)
+export const resumeWorkflow = (id) => api.post(`/api/v1/workflows/${id}/resume`)
+export const rescheduleWorkflow = (id, cronExpression) => api.patch(`/api/v1/workflows/${id}/reschedule`, { cronExpression })
+export const listWorkflows = () => api.get("/api/v1/workflows")
 export default api;

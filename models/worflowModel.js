@@ -7,10 +7,9 @@ const workflowNodeRefSchema = new mongoose.Schema({
     required: true,
   },
   order: { type: Number, required: true },
-  nextOnTrue:  { order: { type: Number, default: null } },
-  nextOnFalse: { order: { type: Number, default: null } },
-  nextNodeId:  { order: { type: Number, default: null } }, 
-
+  nextOnTrueOrder:  { type: Number, default: null },
+  nextOnFalseOrder: { type: Number, default: null },
+  nextNodeIdOrder:  { type: Number, default: null },
 }, { _id: false })
 
 const workflowSchema = new mongoose.Schema(
@@ -21,7 +20,7 @@ const workflowSchema = new mongoose.Schema(
       required: true,
     },
     name:   { type: String, required: true, trim: true },
-    status: { type: String, enum: ["draft", "published"], default: "draft" },
+    status: { type: String, enum: ["draft", "published","paused"], default: "draft" },
     trigger: {
       type:           { type: String, enum: ["webhook", "schedule"], required: true },
       secretKey:      String,

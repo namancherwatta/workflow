@@ -21,28 +21,38 @@ const NODE_TIMEOUT   = 10_000  // 10 seconds per node
 function getNextNodeRef(node, currentNodeRef, sortedNodes, result, arrivedViaBranch = false) {
 
   if (node.type === "condition") {
-    const branchRef = result.conditionResult
-      ? currentNodeRef.nextOnTrue
-      : currentNodeRef.nextOnFalse
+    // ❌ old — reads nested object
+    // const branchRef = result.conditionResult
+    //   ? currentNodeRef.nextOnTrue
+    //   : currentNodeRef.nextOnFalse
+    // if (branchRef?.order == null) return { nodeRef: null, viaBranch: false }
+    // const found = sortedNodes.find(n => n.order === branchRef.order) || null
 
-    if (branchRef?.order == null) return { nodeRef: null, viaBranch: false }
+    // ✅ new — reads flat number directly
+    const branchOrder = result.conditionResult
+      ? currentNodeRef.nextOnTrueOrder
+      : currentNodeRef.nextOnFalseOrder
 
-    const found = sortedNodes.find(n => n.order === branchRef.order) || null
+    if (branchOrder == null) return { nodeRef: null, viaBranch: false }
+
+    const found = sortedNodes.find(n => n.order === branchOrder) || null
     return { nodeRef: found, viaBranch: true }
   }
 
-  // Explicit nextNodeId — follow it, but KEEP viaBranch flag alive
-  if (currentNodeRef.nextNodeId?.order != null) {
-    const found = sortedNodes.find(n => n.order === currentNodeRef.nextNodeId.order) || null
-    return { nodeRef: found, viaBranch: arrivedViaBranch }  // ← was: false, now propagates
+  // ❌ old — reads nested object
+  // if (currentNodeRef.nextNodeId?.order != null) {
+  //   const found = sortedNodes.find(n => n.order === currentNodeRef.nextNodeId.order) || null
+
+  // ✅ new — reads flat number directly
+  if (currentNodeRef.nextNodeIdOrder != null) {
+    const found = sortedNodes.find(n => n.order === currentNodeRef.nextNodeIdOrder) || null
+    return { nodeRef: found, viaBranch: arrivedViaBranch }
   }
 
-  // No explicit next — if we're in a branch, STOP (don't bleed into sibling branch)
   if (arrivedViaBranch) {
     return { nodeRef: null, viaBranch: false }
   }
 
-  // Default linear progression (only for nodes NOT inside a branch)
   const currentOrder = currentNodeRef.order
   const nextInOrder  = sortedNodes
     .filter(n => n.order > currentOrder)

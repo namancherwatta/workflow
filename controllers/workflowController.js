@@ -40,12 +40,12 @@ export const createWorkflow = async (req, res) => {
 
       // Build the workflow node reference
       nodeRefs.push({
-        nodeId:     createdNode._id,
+        nodeId:           createdNode._id,
         order,
-        nextOnTrue:  nextOnTrue  ? { order: nextOnTrue.order }  : undefined,
-        nextOnFalse: nextOnFalse ? { order: nextOnFalse.order } : undefined,
-        nextNodeId:  nextNodeId  ? { order: nextNodeId.order }  : undefined,
-      })
+        nextOnTrueOrder:  nextOnTrue  ? nextOnTrue.order  : null,
+        nextOnFalseOrder: nextOnFalse ? nextOnFalse.order : null,
+        nextNodeIdOrder:  nextNodeId  ? nextNodeId.order  : null,
+})
     }
 
     // 2. Sort refs by order just to be safe
@@ -231,6 +231,83 @@ export const getRunDetail = async (req, res) => {
       return res.status(404).json({ message: "Run not found" })
 
     res.json({ run })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+}
+
+
+//Pause workflow
+export const pauseWorkflow = async (req, res) => {
+  try {
+    const workflow = await Workflow.findById(req.params.id)
+    if (!workflow) return res.status(404).json({ message: "Workflow not found" })
+    if (workflow.userId.toString() !== req.userId)
+      return res.status(403).json({ message: "Forbidden" })
+    if (workflow.status !== "published")
+      return res.status(400).json({ message: "Only published workflows can be paused" })
+
+    workflow.status = "paused"
+    await workflow.save()
+    unscheduleWorkflow(workflow._id)  // stop cron if scheduled
+    res.json({ message: "Workflow paused", workflow })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+}
+
+//Resume workflow
+export const resumeWorkflow = async (req, res) => {
+  try {
+    const workflow = await Workflow.findById(req.params.id)
+    if (!workflow) return res.status(404).json({ message: "Workflow not found" })
+    if (workflow.userId.toString() !== req.userId)
+      return res.status(403).json({ message: "Forbidden" })
+    if (workflow.status !== "paused")
+      return res.status(400).json({ message: "Only paused workflows can be resumed" })
+
+    workflow.status = "published"
+    await workflow.save()
+    if (workflow.trigger.type === "schedule") scheduleWorkflow(workflow)
+    res.json({ message: "Workflow resumed", workflow })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+}
+
+//reschedule workflow
+export const rescheduleWorkflow = async (req, res) => {
+  try {
+    const { cronExpression } = req.body
+    const workflow = await Workflow.findById(req.params.id)
+
+    if (!workflow) return res.status(404).json({ message: "Workflow not found" })
+    if (workflow.userId.toString() !== req.userId)
+      return res.status(403).json({ message: "Forbidden" })
+    if (workflow.trigger.type !== "schedule")
+      return res.status(400).json({ message: "Only schedule workflows can be rescheduled" })
+    if (!cron.validate(cronExpression))
+      return res.status(400).json({ message: "Invalid cron expression" })
+
+    workflow.trigger.cronExpression = cronExpression
+    await workflow.save()
+
+    // Re-register cron job with new expression
+    if (workflow.status === "published") scheduleWorkflow(workflow)
+
+    res.json({ message: "Workflow rescheduled", workflow })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+}
+
+// workflowController.js
+export const listWorkflows = async (req, res) => {
+  try {
+    const workflows = await Workflow.find({ userId: req.userId })
+      .sort({ updatedAt: -1 })
+      .select("-nodes")  // exclude heavy nodes array for list view
+    res.json({ workflows })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

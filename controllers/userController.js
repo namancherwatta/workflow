@@ -8,6 +8,8 @@ dotenv.config()
 const register = async (req, res) => {
   try {
     const { name, email, password } = req.body
+    if (!name || !email || !password)
+      return res.status(400).json({ message: "name, email and password are required" })
     const hashedPassword = bcrypt.hashSync(password, 10)
     const dbUser = await user.create({ name, email, password: hashedPassword })
     dbUser.password = "XXX"
