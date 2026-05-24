@@ -3,17 +3,17 @@ import Workflow from "../models/worflowModel.js"
 import Run from "../models/run.js"
 import { workflowQueue } from "../queues/workflowQueue.js"
 
-// Store active cron jobs so we can cancel/reschedule them
+// In-memory store of active cron jobs keyed by workflow ID string
+// Used to cancel or replace jobs when workflows are paused, deleted, or rescheduled
 const activeJobs = new Map()
-// Map looks like: { workflowId → cronJob }
 
-// Called once on server startup
+// Called once on server startup — loads all published scheduled workflows from DB
+// and registers a cron job for each one
 export async function initScheduler() {
   console.log("Initialising cron scheduler...")
 
-  // Load all published schedule-type workflows from DB
   const workflows = await Workflow.find({
-    status: "published",
+    status:         "published",
     "trigger.type": "schedule",
   })
 
@@ -24,25 +24,25 @@ export async function initScheduler() {
   }
 }
 
-// Schedule a single workflow — called on startup AND when user publishes one
+// Registers (or replaces) the cron job for a single workflow
+// Safe to call multiple times — stops any existing job before creating a new one
 export function scheduleWorkflow(workflow) {
   const expression = workflow.trigger.cronExpression
 
-  // Validate the cron expression before registering
   if (!cron.validate(expression)) {
     console.error(`Invalid cron expression for workflow ${workflow._id}: "${expression}"`)
     return
   }
 
-  // If already scheduled, stop it first (handles rescheduling)
+  // Stop the previous job if one already exists (handles rescheduling)
   if (activeJobs.has(workflow._id.toString())) {
     activeJobs.get(workflow._id.toString()).stop()
   }
 
-  // Register the cron job
   const job = cron.schedule(expression, async () => {
     console.log(`Cron firing for workflow ${workflow._id}`)
     try {
+      // Create a run record and push it to the queue — same path as webhook/manual triggers
       const run = await Run.create({
         workflowId:     workflow._id,
         userId:         workflow.userId,
@@ -57,18 +57,17 @@ export function scheduleWorkflow(workflow) {
         workflowId: workflow._id.toString(),
         runId:      run._id.toString(),
       })
-
     } catch (err) {
       console.error(`Scheduler error for workflow ${workflow._id}:`, err.message)
     }
   })
 
-  // Save the job reference so we can stop it later
   activeJobs.set(workflow._id.toString(), job)
   console.log(`Scheduled workflow ${workflow._id} with "${expression}"`)
 }
 
-// Call this when a user deletes or unpublishes a workflow
+// Stops and removes the cron job for a workflow
+// Called when a workflow is deleted or paused
 export function unscheduleWorkflow(workflowId) {
   const job = activeJobs.get(workflowId.toString())
   if (job) {

@@ -1,7 +1,10 @@
+// Condition node — evaluates a field from the previous node's output against a value
+// Returns conditionResult: true/false which the executor uses to pick a branch
+// Also passes the full input through so the next node has access to previous data
 export default async function execute(config, input) {
   const { field, operator, value } = config
 
-  // Safely navigate nested field e.g. "data.status" from input
+  // Supports dot notation for nested fields e.g. "data.user.status"
   const actual = field.split(".").reduce((obj, key) => obj?.[key], input)
 
   let result = false
@@ -29,6 +32,5 @@ export default async function execute(config, input) {
       throw new Error(`Unknown condition operator: "${operator}"`)
   }
 
-  // Return result + pass input through so next node gets it
   return { conditionResult: result, ...input }
 }
